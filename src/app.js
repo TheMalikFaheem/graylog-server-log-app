@@ -11,6 +11,7 @@ const rateLimit = require('express-rate-limit');
 
 const logger = require('./logger');
 const routes = require('./routes');
+const simulateRoutes = require('./routes/simulate');
 const {
   requestId,
   requestLogger,
@@ -94,6 +95,7 @@ app.use(requestLogger);
 
 // ── Application routes ────────────────────────
 app.use('/', routes);
+app.use('/simulate', simulateRoutes);
 
 // ── 404 catch-all ─────────────────────────────
 app.use(notFoundHandler);
