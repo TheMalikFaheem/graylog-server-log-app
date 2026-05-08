@@ -1,0 +1,16 @@
+# Logs directory
+logs/
+*.log
+
+# Environment secrets
+.env
+
+# Dependencies
+node_modules/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
