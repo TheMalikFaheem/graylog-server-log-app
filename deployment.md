@@ -30,22 +30,36 @@
 
 ## 1. Prerequisites
 
+### Your two DigitalOcean Droplets
+
+| Droplet | IP Address | Region | Role |
+|---|---|---|---|
+| `app-server` | **157.245.138.153** | NYC1 | Hosts the Node.js Express app |
+| `main-server` | **168.144.35.138** | SGP1 | Hosts Graylog (already running) |
+
+### Requirements
+
 | Item | Value |
-|---|---|
-| Ubuntu | 22.04 LTS |
-| RAM | Minimum 1 GB |
-| Domain | `your-domain.com` pointing to your server IP |
-| Graylog | Already running (separate server) |
-| Ports needed | 22 (SSH), 80 (HTTP), 443 (HTTPS), 12201/UDP (Graylog) |
+|---|-----------|
+| Ubuntu | 24.04 LTS (both droplets) |
+| RAM | 4 GB (both droplets) |
+| Domain | `your-domain.com` pointing to `157.245.138.153` (app-server) |
+| Graylog | Already running on `main-server` at `168.144.35.138` |
+
+> **Important**: All steps in **Sections 1–15** run on the **app-server** (`157.245.138.153`).
+> Section 16 runs on the **main-server** (`168.144.35.138`).
 
 ---
 
 ## Step 1 – Connect to your server
 
+Connect to the **app-server** (where the Node.js app lives):
+
 ```bash
-ssh root@<YOUR_SERVER_IP>
-# or if you use a key:
-ssh -i ~/.ssh/my-key.pem ubuntu@<YOUR_SERVER_IP>
+# Connect to app-server
+ssh root@157.245.138.153
+# or with a key:
+ssh -i ~/.ssh/my-key.pem root@157.245.138.153
 ```
 
 ---
@@ -205,15 +219,16 @@ sudo -u nodeapp cp .env.example .env
 sudo nano .env
 ```
 
-Set these values in `.env`:
+Set these values in `.env` — **all IPs are pre-filled for your setup**:
 
 ```ini
 NODE_ENV=production
 PORT=3000
 APP_NAME=graylog-express-app
-SERVER_NAME=my-ubuntu-server       # any label you like
+SERVER_NAME=app-server            # this droplet's label in Graylog
 
-GRAYLOG_HOST=<GRAYLOG_SERVER_IP>   # e.g. 192.168.1.50
+# main-server is where Graylog runs
+GRAYLOG_HOST=168.144.35.138
 GRAYLOG_PORT=12201
 
 RATE_LIMIT_WINDOW_MS=900000
@@ -223,7 +238,7 @@ CORS_ORIGIN=https://your-domain.com
 
 Save: `Ctrl+O`, `Enter`, `Ctrl+X`
 
-Secure the file (only owner can read):
+Secure the file:
 
 ```bash
 sudo chmod 600 /var/www/graylog-express-app/.env
@@ -379,47 +394,57 @@ sudo -u nodeapp pm2 set pm2-logrotate:rotateInterval '0 0 * * *'
 
 ## Step 16 – Open Graylog GELF UDP input
 
-Do these steps on your **Graylog server** (web UI at `http://<GRAYLOG_IP>:9000`).
+> 🖥️ **Switch to main-server** for this section.
+>
+> ```bash
+> ssh root@168.144.35.138
+> ```
 
 ### 16.1 – Create a GELF UDP input
 
-1. Go to **System** → **Inputs**
-2. Click **Select input** dropdown → choose **GELF UDP**
-3. Click **Launch new input**
-4. Fill in:
+1. Open Graylog UI → `http://168.144.35.138:9000`
+2. Go to **System** → **Inputs**
+3. Click **Select input** → choose **GELF UDP**
+4. Click **Launch new input**
+5. Fill in:
    - **Title**: `Node.js App GELF`
    - **Bind address**: `0.0.0.0`
    - **Port**: `12201`
-5. Click **Save**
-6. The input should show **RUNNING** ✅
+6. Click **Save**
+7. Status should show **RUNNING** ✅
 
-### 16.2 – Open the firewall on the Graylog server
+### 16.2 – Open the firewall on main-server for app-server
 
-Run on the **Graylog server** (not the app server):
+On **main-server** (`168.144.35.138`):
 
 ```bash
-# Allow UDP 12201 from your app server specifically (more secure)
-sudo ufw allow from <APP_SERVER_IP> to any port 12201 proto udp comment 'GELF from app'
-
-# OR allow from anywhere (less secure, OK for internal networks)
-sudo ufw allow 12201/udp comment 'Graylog GELF UDP'
+# Allow UDP 12201 only from the app-server IP (most secure)
+sudo ufw allow from 157.245.138.153 to any port 12201 proto udp comment 'GELF from app-server'
 
 sudo ufw reload
 sudo ufw status
 ```
 
-### 16.3 – Test UDP connectivity from the app server
-
-```bash
-# Install netcat if not present
-sudo apt install -y netcat
-
-# Send a test GELF UDP packet from the APP server
-echo '{"version":"1.1","host":"test-node","short_message":"UDP test","level":1}' | \
-  nc -u -w1 <GRAYLOG_IP> 12201
+Expected output should include:
+```
+12201/udp                  ALLOW IN    157.245.138.153
 ```
 
-Check Graylog UI: **Search** → `short_message:UDP test` – you should see the message.
+### 16.3 – Test UDP connectivity from app-server to main-server
+
+> 🖥️ **Back on app-server** (`157.245.138.153`):
+
+```bash
+# Install netcat
+sudo apt install -y netcat
+
+# Send a test GELF packet to main-server
+echo '{"version":"1.1","host":"app-server","short_message":"UDP connectivity test","level":1}' | \
+  nc -u -w1 168.144.35.138 12201
+```
+
+Check Graylog UI on `http://168.144.35.138:9000` → **Search** → `short_message:UDP connectivity test`
+You should see the message appear within 10–15 seconds.
 
 ---
 

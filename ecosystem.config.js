@@ -7,7 +7,8 @@ module.exports = {
       // ── Identity ──────────────────────────────
       name: 'graylog-express-app',
       script: './src/app.js',
-      cwd: '/var/www/graylog-express-app', // absolute path on the Ubuntu server
+      // ── app-server (157.245.138.153 NYC1) ──
+      cwd: '/var/www/graylog-express-app',
 
       // ── Clustering ───────────────────────────
       // 'max' = one worker per logical CPU core
