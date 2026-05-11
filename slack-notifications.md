@@ -1,191 +1,158 @@
-# Graylog → Slack Notifications Setup
+# Graylog → Slack: Instant Error Notifications
 
-> **Goal:** Receive real-time error and downtime alerts from Graylog directly in a Slack channel.
-
----
-
-## Table of Contents
-
-1. [Create a Slack Incoming Webhook](#step-1-create-a-slack-incoming-webhook)
-2. [Install the Slack Plugin in Graylog](#step-2-install-the-slack-plugin-in-graylog)
-3. [Create a Notification in Graylog](#step-3-create-a-notification-in-graylog)
-4. [Create an Alert Condition (Event Definition)](#step-4-create-an-alert-condition-event-definition)
-5. [Using HTTP Notification (No Plugin Required)](#step-5-using-http-notification-no-plugin-required)
-6. [Test the Notification](#step-6-test-it)
-7. [Recommended Alert Conditions](#recommended-alert-conditions)
+> **Goal:** Every time a single `error` log hits Graylog, you get an instant Slack message.  
+> **Method:** Graylog's built-in HTTP Notification — no plugins, no extra installs.
 
 ---
 
-## Step 1: Create a Slack Incoming Webhook
-
-1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App**
-2. Choose **"From scratch"** → name it (e.g., `Graylog Alerts`) → select your workspace
-3. In the left sidebar → **Incoming Webhooks** → toggle **Activate Incoming Webhooks: ON**
-4. Click **"Add New Webhook to Workspace"** → choose your `#alerts` channel
-5. **Copy the Webhook URL** — it looks like:
+## How It Works
 
 ```
-https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXX
+Your App (Node.js)
+  └── sends error log via GELF/UDP
+        ↓
+Graylog receives the log
+  └── Event Definition checks: level = error?
+        ↓ yes
+Graylog fires HTTP Notification
+  └── POSTs to your Slack Webhook URL
+        ↓
+You get a message in #alerts instantly
 ```
-
-> ⚠️ **Keep this URL secret.** Anyone with it can post to your Slack channel.
 
 ---
 
-## Step 2: Install the Slack Plugin in Graylog
+## Step 1 — Create a Slack Webhook URL
 
-Graylog needs a notification plugin to natively support Slack. You have two options:
+1. Go to → **https://api.slack.com/apps**
+2. Click **"Create New App"** → choose **"From scratch"**
+3. Name it `Graylog Alerts` → pick your workspace → click **Create App**
+4. In the left sidebar → click **"Incoming Webhooks"**
+5. Toggle **"Activate Incoming Webhooks"** → **ON**
+6. Scroll down → click **"Add New Webhook to Workspace"**
+7. Select your `#alerts` channel (or whichever channel you want) → click **Allow**
+8. **Copy the Webhook URL** — it looks like this:
 
-### Option A — Graylog Slack Plugin (Recommended)
+```
+https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXX
+```
 
+> ⚠️ Keep this URL private. Anyone with it can post to your Slack.
+
+---
+
+## Step 2 — Create a Notification in Graylog
+
+1. Open Graylog UI → **http://168.144.35.138:9000**
+2. Top menu → **Alerts** → **Notifications**
+3. Click **"Create Notification"**
+4. Fill in exactly:
+
+| Field | Value |
+|---|---|
+| **Title** | `Slack Error Alert` |
+| **Notification Type** | `HTTP Notification` |
+| **URL** | *(paste your Webhook URL from Step 1)* |
+
+5. Click **"Save"**
+
+---
+
+## Step 3 — Create the Event Definition (the trigger)
+
+This is what watches for error logs and fires the notification.
+
+1. Top menu → **Alerts** → **Event Definitions**
+2. Click **"Create Event Definition"**
+
+### Fill in each tab:
+
+**Tab 1 — Details**
+
+| Field | Value |
+|---|---|
+| **Title** | `Single Error Log Alert` |
+| **Description** | `Fires instantly on any error log` |
+| **Priority** | High |
+
+**Tab 2 — Condition**
+
+| Field | Value |
+|---|---|
+| **Condition Type** | `Filter & Aggregation` |
+| **Search Query** | `level:3` |
+| **Streams** | Select your app stream (or `All Messages`) |
+| **Search Within** | `1 Minute` |
+| **Execute Every** | `1 Minute` |
+
+> `level:3` is the GELF syslog integer for **ERROR**.  
+> Your app sends this automatically via the custom GELF transport in `logger.js`.
+
+**Tab 3 — Fields** — skip, nothing needed here
+
+**Tab 4 — Notifications**
+
+- Click **"Add Notification"**
+- Select **`Slack Error Alert`** (the one you created in Step 2)
+- **Grace Period** → set to `0` (so every error fires, no suppression)
+
+**Tab 5 — Summary** → click **"Done"**
+
+---
+
+## Step 4 — Test It
+
+### Trigger a real error from your app:
 ```bash
-# On your Graylog server
-wget https://github.com/graylog-labs/graylog-plugin-slack/releases/download/3.1.0/graylog-plugin-slack-3.1.0.jar \
-  -O /usr/share/graylog-server/plugin/graylog-plugin-slack.jar
-
-# Restart Graylog
-sudo systemctl restart graylog-server
+curl http://localhost:3000/error
 ```
 
-> If using **Docker Compose**, mount the plugin into the container:
-> ```yaml
-> volumes:
->   - ./plugins/graylog-plugin-slack.jar:/usr/share/graylog-server/plugin/graylog-plugin-slack.jar
-> ```
+This hits the `/error` route in your app which intentionally throws and logs an error via Winston → GELF → Graylog.
 
-### Option B — Built-in HTTP Notification
-
-No plugin required. Works directly with Slack webhooks. See [Step 5](#step-5-using-http-notification-no-plugin-required).
-
----
-
-## Step 3: Create a Notification in Graylog
-
-1. In Graylog UI → **Alerts** → **Notifications** → **Create Notification**
-2. Fill in the fields:
-
-| Field             | Value                                      |
-|-------------------|--------------------------------------------|
-| Title             | `Slack Error Alert`                        |
-| Notification Type | `Slack Notification` or `HTTP Notification`|
-| Webhook URL       | Your Slack Webhook URL from Step 1         |
-| Channel           | `#alerts`                                  |
-| Icon Emoji        | `:rotating_light:`                         |
-| Bot Name          | `Graylog`                                  |
-
-3. Click **Save**.
-
----
-
-## Step 4: Create an Alert Condition (Event Definition)
-
-Go to **Alerts** → **Event Definitions** → **Create Event Definition**
-
-### For Error Notifications
-
+### What you should see in Slack within ~1 minute:
 ```
-Title: High Error Rate Alert
-Filter:
-  Search Query: level:3 OR level:2 OR level:1
-    (level 3 = Error, 2 = Critical, 1 = Alert)
-  Stream: <Your App Stream>
-  Timerange: Last 1 minute
-Aggregation:
-  Condition: Count > 0
-Notification: Slack Error Alert (created in Step 3)
+[Graylog Alert] Single Error Log Alert
+A condition was triggered: level:3
+Stream: All Messages
 ```
 
-### For Downtime / No-Data Notifications
+### If nothing appears in Slack:
+```bash
+# 1. Confirm the log reached Graylog
+# Go to: http://168.144.35.138:9000 → Search → type: level:3 → hit Enter
+# You should see the error log appear
 
-```
-Title: App Downtime Alert
-Filter:
-  Search Query: *
-  Stream: <Your App Stream>
-  Timerange: Last 5 minutes
-Aggregation:
-  Condition: Count < 1  (message count drops to zero = app is down)
-Notification: Slack Error Alert (created in Step 3)
-```
+# 2. Check the notification fired
+# Alerts → Event Definitions → click your definition → "Trigger Now" button
 
-> **Tip:** Set a **Grace Period** (e.g., 5 minutes) to avoid alert spam during brief blips.
-
----
-
-## Step 5: Using HTTP Notification (No Plugin Required)
-
-If you prefer not to install a plugin, use the built-in **HTTP Notification** type:
-
-1. Notification Type → **HTTP Notification**
-2. URL → paste your Slack Webhook URL
-3. Method → `POST`
-
-Graylog will POST a JSON payload automatically. You can also use a custom Slack-formatted body:
-
-```json
-{
-  "text": "*🚨 Graylog Alert Triggered*",
-  "attachments": [
-    {
-      "color": "danger",
-      "title": "${event_definition_title}",
-      "text": "${event.message}",
-      "fields": [
-        { "title": "Stream",    "value": "${stream.title}",    "short": true },
-        { "title": "Triggered", "value": "${event.timestamp}", "short": true }
-      ],
-      "footer": "Graylog Alerting",
-      "footer_icon": "https://www.graylog.org/favicon.ico"
-    }
-  ]
-}
+# 3. Manually test the webhook URL
+curl -X POST -H 'Content-type: application/json' \
+  --data '{"text":"✅ Webhook test from terminal"}' \
+  https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+# Replace with your actual URL — you should see the message in Slack instantly
 ```
 
 ---
 
-## Step 6: Test It
+## GELF Level Reference
 
-In Graylog → open your Notification → click **"Send Test Notification"**
+Your app sends these numeric levels to Graylog:
 
-Check your Slack channel for the test message. If it doesn't appear:
-- Verify the Webhook URL is correct
-- Confirm the Slack app is still installed in your workspace
-- Check Graylog logs: `sudo journalctl -u graylog-server -f`
-
----
-
-## Recommended Alert Conditions
-
-| Alert Name             | Search Query / Condition              | Timerange | Severity       |
-|------------------------|---------------------------------------|-----------|----------------|
-| High Error Rate        | `level:3 count > 10`                  | 1 min     | 🔴 Critical    |
-| Any Fatal/Critical Log | `level:2 OR level:1 count > 0`        | 1 min     | 🔴 Critical    |
-| App Goes Silent        | `message count < 1`                   | 5 min     | 🟠 Warning     |
-| Slow Response Times    | `response_time:>5000 count > 5`       | 2 min     | 🟡 Warning     |
-| Login Failures         | `message:"authentication failed" count > 3` | 5 min | 🟡 Warning |
-
----
-
-## Flow Summary
-
-```
-Slack App
-  └── Incoming Webhook URL
-           ↓
-Graylog Notification
-  └── (paste Webhook URL)
-           ↓
-Graylog Event Definition
-  └── (define trigger: error level, count, timerange)
-           ↓
-Alert fires → POST to Slack Webhook → Message in #alerts
-```
+| Level Name | Number | Search Query |
+|---|---|---|
+| Emergency | 0 | `level:0` |
+| Alert | 1 | `level:1` |
+| Critical | 2 | `level:2` |
+| **Error** | **3** | **`level:3`** ← you want this |
+| Warning | 4 | `level:4` |
+| Info | 6 | `level:6` |
+| Debug | 7 | `level:7` |
 
 ---
 
 ## Related Docs
 
-- [`deployment.md`](./deployment.md) — Full server deployment guide
-- [`troubleshooting.md`](./troubleshooting.md) — Common issues and fixes
-- [Graylog Alerting Docs](https://docs.graylog.org/docs/alerts)
+- [`deployment.md`](./deployment.md) — Full server setup guide  
+- [`troubleshooting.md`](./troubleshooting.md) — Common issues and fixes  
+- [Graylog Alerting Docs](https://docs.graylog.org/docs/alerts)  
 - [Slack Incoming Webhooks Docs](https://api.slack.com/messaging/webhooks)
